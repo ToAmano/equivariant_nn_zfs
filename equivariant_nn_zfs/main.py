@@ -53,6 +53,8 @@ if __name__ == "__main__":
     parser.add_argument('--len_segment', type=int, default=500, help='length of the segment')
     parser.add_argument('--length_test', type=str, default='', help='length of test set')
     parser.add_argument('--seed', type=int, default=123456789, help='seed')
+    parser.add_argument('--target_key', type=str, default='target_L2', help='extxyz info key of the 3x3 target tensor')
+    parser.add_argument('--target_scale', type=float, default=1.0, help='the model learns target / target_scale (e.g. 1000 for MHz -> GHz)')
 
     args = parser.parse_args()
 
@@ -85,13 +87,17 @@ if __name__ == "__main__":
     dataset = MinimalDataset(db,
                              device=device,
                              irreps_out=Irreps('2e'),
-                             radial_cutoff=args.rcut
+                             radial_cutoff=args.rcut,
+                             target_key=args.target_key,
+                             target_scale=args.target_scale
                              )
 
     dataset_test = MinimalDataset(db_test,
                                   device=device,
                                   irreps_out=Irreps('2e'),
-                                  radial_cutoff=args.rcut
+                                  radial_cutoff=args.rcut,
+                                  target_key=args.target_key,
+                                  target_scale=args.target_scale
                                   )
 
     total_size = len(dataset)
@@ -157,6 +163,8 @@ if __name__ == "__main__":
                                 )
 
         start_epoch = 0
+
+        model.z_table = dataset.z_table  # kept with the model for prediction (predict.py)
 
         optimizer = optimizer_lambda(model.parameters())
 

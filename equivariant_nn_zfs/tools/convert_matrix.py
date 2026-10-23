@@ -1,83 +1,28 @@
 import torch
+from e3nn.io import CartesianTensor
 from e3nn.o3 import Irreps
+
+# pbc_zfs: Cartesian <-> spherical conversion in e3nn's own basis. The original hand-written matrices use the standard
+# real-spherical-harmonic order (xy, yz, 3z^2-r^2, xz, x^2-y^2), which is not e3nn's '2e' basis, so targets and model
+# outputs transformed differently under rotation.
+_SYM = CartesianTensor("ij=ji")  # irreps 1x0e + 1x2e
+
 
 def cartesian_to_spherical_irreps(cartmat: torch.Tensor,
                                   irreps: Irreps,
                                   ) -> torch.Tensor:
-    """
-    Convert a 3x3 real symmetric matrix into spherical components
-    ordered according to Irreps("0e + 1o + 2e").
-
-    Returns:
-        components: torch.Tensor of shape (9,) — spherical components
-        irreps: Irreps object — "0e + 1o + 2e"
-    """
+    """3x3 symmetric matrix -> components in e3nn's basis for irreps '2e' (traceless part) or '0e+2e'."""
     assert cartmat.shape == (3, 3)
-
-    def t(data):
-        return torch.tensor(data, dtype=cartmat.dtype, device=cartmat.device)
-
-    #                        xx  xy  xz  yx  yy  yz  zx  zy  zz
-
-    matrix0 = torch.stack([t([1/3,  0,  0,  0,  1/3,  0,  0,  0,  1/3])
-                           ],
-                          dim=0
-                          )
-
-    matrix1 = torch.stack([t([0, 0, 0, 0, 0, 1, 0, -1, 0]),
-                           t([0, 0, 1, 0, 0, 0, -1, 0, 0]),
-                           t([0, 1, 0, -1, 0, 0, 0, 0, 0])
-                           ],
-                          dim=0
-                          )
-
-    matrix2 = torch.stack([t([0, 1, 0, 1, 0, 0, 0, 0, 0]),
-                           t([0, 0, 0, 0, 0, 1, 0, 1, 0]),
-                           t([-1, 0, 0, 0, -1, 0, 0, 0, 2]),
-                           t([0, 0, 1, 0, 0, 0, 1, 0, 0]),
-                           t([1, 0, 0, 0, -1, 0, 0, 0, 0])
-                           ],
-                          dim=0
-                          )
-
-    # TODO FIX THIS NONSENSE
+    sph = _SYM.from_cartesian(0.5 * (cartmat + cartmat.T))
+    if str(irreps) == '1x2e':
+        return sph[1:]
     if str(irreps) == '1x0e+1x2e':
-        matrix = torch.cat([matrix0, matrix2], dim=0)
-    elif str(irreps) == '1x2e':
-        matrix = matrix2
-    elif str(irreps) == '1x0e+1x1o+1x2e':
-        matrix = torch.cat([matrix0, matrix1, matrix2], dim=0)
-
-
-    return torch.matmul(matrix, cartmat.flatten())
+        return sph
+    raise ValueError(f"irreps {irreps} not supported (only symmetric tensors: 2e or 0e+2e)")
 
 
 def spherical_irreps_to_cartesian(sphmat: torch.Tensor) -> torch.Tensor:
-    """
-    Convert spherical tensor components to 3×3 real Cartesian tensors.
-    Input: (batch_size, 9)
-    Output: (batch_size, 3, 3)
-    Safe for autograd (no in-place ops).
-    """
-
-    def t(data):
-        return torch.tensor(data, dtype=sphmat.dtype, device=sphmat.device)
-
-    #                        xx  xy  xz  yx  yy  yz  zx  zy  zz
-
-    matrix = torch.stack([t([1/3,  0,  0,  0,  1/3,  0,  0,  0,  1/3]),
-                          t([0,  0,  0,  0,  0,  1,  0, -1,  0]),
-                          t([0,  0,  1,  0,  0,  0, -1,  0,  0]),
-                          t([0,  1,  0, -1,  0,  0,  0,  0,  0]),
-                          t([0,  1,  0,  1,  0,  0,  0,  0,  0]),
-                          t([0,  0,  0,  0,  0,  1,  0,  1,  0]),
-                          t([-1, 0,  0,  0, -1,  0,  0,  0,  2]),
-                          t([0,  0,  1,  0,  0,  0,  1,  0,  0]),
-                          t([1,  0,  0,  0, -1,  0,  0,  0,  0])
-                          ],
-                         dim=0
-                         )
-
-    inv_matrix = torch.inverse(matrix)
-
-    return torch.matmul(inv_matrix, sphmat)
+    """Components (..., 5) for '2e' or (..., 6) for '0e+2e' in e3nn's basis -> (..., 3, 3) symmetric matrix."""
+    if sphmat.shape[-1] == 5:
+        sphmat = torch.cat([torch.zeros(*sphmat.shape[:-1], 1, dtype=sphmat.dtype, device=sphmat.device), sphmat], dim=-1)
+    return _SYM.to_cartesian(sphmat)

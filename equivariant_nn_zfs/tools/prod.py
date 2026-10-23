@@ -20,11 +20,17 @@ class Product3body(nn.Module):
                                              irreps_in2=irreps_sh,
                                              irreps_target=irreps_sh
                                              )
-        ncor_irreps_sh = (len(ncor)*irreps_sh).sort()[0].simplify()
+        # The input of linear_body is [x, x (x) x, (x (x) x) (x) x] concatenated along the irreps axis, i.e. the layout
+        # irreps_sh + irreps_sh + irreps_sh (not sorted). The original used the sorted/simplified irreps here, which
+        # mixes components of different l and breaks equivariance (pbc_zfs fix).
+        ncor_irreps_sh = o3.Irreps(sum((list(irreps_sh) for _ in ncor), []))
 
         self.linear_body = Linear(irreps_in=ncor_irreps_sh,
                                   irreps_out=irreps_sh
                                   )
+        # [nodes, channels, irreps_sh.dim] -> e3nn layout of hidden_irreps (channels x l blocks, channel-major inside a block)
+        assert hidden_irreps == (irreps_sh * hidden_irreps.count(irreps_sh[0].ir)).sort()[0].simplify()
+        self.sh_slices = [(sl.start, sl.stop) for sl in irreps_sh.slices()]
 
         self.linear = Linear(irreps_in=hidden_irreps,
                              irreps_out=hidden_irreps
@@ -53,11 +59,11 @@ class Product3body(nn.Module):
 
         node_out = self.linear_body(node_out)  # nodes, channels, irreps
 
-        out = []
-        for s in torch.unbind(node_out, -1):
-            out.append(s)
+        # flatten to the e3nn layout of hidden_irreps (the original concatenated component-major, which is not it)
+        nodes = node_out.shape[0]
+        node_out = torch.cat([node_out[..., a:b].reshape(nodes, -1) for a, b in self.sh_slices], dim=-1)
 
-        node_out = self.linear(torch.cat(out, dim=-1))
+        node_out = self.linear(node_out)
 
         node_out = self.fctp_attributes(node_attr, node_out)
 

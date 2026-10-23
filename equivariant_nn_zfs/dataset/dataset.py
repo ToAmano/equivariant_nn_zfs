@@ -10,12 +10,16 @@ class MinimalDataset(Dataset):
                  structures,
                  irreps_out,
                  radial_cutoff,
-                 device
+                 device,
+                 target_key='target_L2',
+                 target_scale=1.0
                  ):
         self.radial_cutoff = radial_cutoff
         self.structures = structures
         self.irreps_out = irreps_out
-        self.targets = torch.stack([cartesian_to_spherical_irreps(torch.tensor(s.info['target_L2'].reshape(3, 3)),
+        # target_scale: the model learns target / target_scale (e.g. 1000 for a D tensor in MHz -> GHz)
+        self.target_scale = target_scale
+        self.targets = torch.stack([cartesian_to_spherical_irreps(torch.tensor(s.info[target_key].reshape(3, 3)) / target_scale,
                                                                   irreps=irreps_out) for s in structures], dim=0)
         self.device = device
 
@@ -23,7 +27,7 @@ class MinimalDataset(Dataset):
         for s in structures:
             s_z_table = s.get_atomic_numbers()
             z_table.update(s_z_table)
-        self.z_table = tools.AtomicNumberTable(list(z_table))
+        self.z_table = tools.AtomicNumberTable(sorted(z_table))  # sorted: same one-hot order for every dataset
 
     def __len__(self):
         return len(self.structures)
@@ -35,7 +39,9 @@ class MinimalDataset(Dataset):
             atomic_numbers=struct.numbers,
             positions=struct.positions,
             properties={'positions': 'positions'},
-            property_weights={'positions': 1}
+            property_weights={'positions': 1},
+            cell=struct.cell.array if struct.pbc.any() else None,  # periodic supercells: neighbours across the cell
+            pbc=tuple(bool(x) for x in struct.pbc)
         )
 
         # we handle configurations using the AtomicData class
@@ -60,7 +66,7 @@ class EvaluationDataset(Dataset):
         for s in structures:
             s_z_table = s.get_atomic_numbers()
             z_table.update(s_z_table)
-        self.z_table = tools.AtomicNumberTable(list(z_table))
+        self.z_table = tools.AtomicNumberTable(sorted(z_table))  # sorted: same one-hot order for every dataset
 
     def __len__(self):
         return len(self.structures)
@@ -72,7 +78,9 @@ class EvaluationDataset(Dataset):
             atomic_numbers=struct.numbers,
             positions=struct.positions,
             properties={'positions': 'positions'},
-            property_weights={'positions': 1}
+            property_weights={'positions': 1},
+            cell=struct.cell.array if struct.pbc.any() else None,  # periodic supercells: neighbours across the cell
+            pbc=tuple(bool(x) for x in struct.pbc)
         )
 
         # we handle configurations using the AtomicData class
