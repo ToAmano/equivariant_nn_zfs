@@ -55,6 +55,8 @@ if __name__ == "__main__":
     parser.add_argument('--max_l_hidden', type=int, default=2, help='max l in hidden irreps')
     parser.add_argument('--length_test', type=str, default='', help='length of test set')
     parser.add_argument('--seed', type=int, default=123456789, help='seed')
+    parser.add_argument('--target_key', type=str, default='target_L2', help='extxyz info key of the 3x3 target tensor')
+    parser.add_argument('--target_scale', type=float, default=1.0, help='the model learns target / target_scale (e.g. 1000 for MHz -> GHz)')
 
     args = parser.parse_args()
 
@@ -93,6 +95,8 @@ if __name__ == "__main__":
                              rule='ij=ji',
                              radial_cutoff=args.rcut,
                              radial_cutoff_zfs=args.rcut_zfs,
+                             target_key=args.target_key,
+                             target_scale=args.target_scale,
                              )
 
     dataset_test = MinimalDataset(db_test,
@@ -100,6 +104,9 @@ if __name__ == "__main__":
                                   rule='ij=ji',
                                   radial_cutoff=args.rcut,
                                   radial_cutoff_zfs=args.rcut_zfs,
+                                  z_table=dataset.z_table.zs,  # zfs_sic: the training species table
+                                  target_key=args.target_key,
+                                  target_scale=args.target_scale,
                                   )
 
     total_size = len(dataset)

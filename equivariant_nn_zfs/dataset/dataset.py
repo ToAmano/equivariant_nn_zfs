@@ -16,14 +16,18 @@ class MinimalDataset(Dataset):
                  radial_cutoff_zfs,
                  device,
                  rule,
-                 z_table=None
+                 z_table=None,
+                 target_key='target_L2',
+                 target_scale=1.0
                  ):
         self.radial_cutoff = radial_cutoff
         self.radial_cutoff_zfs = radial_cutoff_zfs
         self.structures = structures
         cartesian = CartesianTensor(rule)
         self.irreps_out = cartesian
-        self.targets = cartesian.from_cartesian(torch.stack([(torch.tensor(s.info['target_L2']).reshape(3, 3)) for s in structures], dim=0))
+        # zfs_sic: configurable key; the model learns target / target_scale (e.g. 1000: D tensor in MHz -> GHz)
+        self.target_scale = target_scale
+        self.targets = cartesian.from_cartesian(torch.stack([(torch.tensor(s.info[target_key]).reshape(3, 3)) / target_scale for s in structures], dim=0))
         self.device = device
 
         if z_table is None:
@@ -31,7 +35,7 @@ class MinimalDataset(Dataset):
             for s in structures:
                 s_z_table = s.get_atomic_numbers()
                 z_table.update(s_z_table)
-            self.z_table = tools.AtomicNumberTable(list(z_table))
+            self.z_table = tools.AtomicNumberTable(sorted(z_table))  # zfs_sic: same one-hot order for every dataset
         else:
             self.z_table = tools.AtomicNumberTable(z_table)
 
