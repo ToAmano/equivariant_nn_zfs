@@ -144,7 +144,8 @@ def train(model: TensorRegressor,
           batch_size,
           num_segments,
           seed,
-          device=None
+          device=None,
+          es_patience=0
           ):
     random.seed(seed)
 
@@ -180,6 +181,9 @@ def train(model: TensorRegressor,
     console_logger.warning(f"{segment_size} data points in segment")
 
     shuffled = [i for i in range(total_data)]  # initialize the index list of data
+
+    # early stopping on the validation loss (es_patience > 0) and the best-validation model (checkpoint_model_best.pth)
+    best_val, best_epoch, n_bad = float('inf'), -1, 0
 
     for epoch in range(start_epoch, n_epochs):
         error_batches = []
@@ -277,6 +281,17 @@ def train(model: TensorRegressor,
         }, 'checkpoint.pth')
 
         torch.save(model, 'checkpoint_model.pth')
+
+        if val_loss < best_val:
+            best_val, best_epoch, n_bad = float(val_loss), epoch, 0
+            torch.save(model, 'checkpoint_model_best.pth')
+        else:
+            n_bad += 1
+        if es_patience > 0 and n_bad >= es_patience:
+            console_logger.info(f"Early stopping at epoch {epoch}: no new validation minimum for {es_patience} epochs")
+            break
+
+    console_logger.info(f"Best validation loss {best_val:.6f} at epoch {best_epoch} (checkpoint_model_best.pth)")
 
     torch.save(model, 'checkpoint_model_final.pth')
 

@@ -42,6 +42,7 @@ if __name__ == "__main__":
     parser.add_argument('--rcut', type=float, help='cutoff for the ML')
     parser.add_argument('--rcut_zfs', type=float, help='cutoff for the active atoms')
     parser.add_argument('--patience', type=int, default=60, help='patience interval for scheduler')
+    parser.add_argument('--es_patience', type=int, default=0, help='early stopping: stop after this many epochs without a new validation minimum (0 = off)')
     parser.add_argument('--restart', type=str2bool, default=False, help='restart the training from last iteration')
     parser.add_argument('--lr', type=float, default=1e-3, help='starting learning rate')
     parser.add_argument('--lr_factor', type=float, default=0.75, help='ratio of the final lr')
@@ -201,5 +202,6 @@ if __name__ == "__main__":
           start_epoch=start_epoch,
           batch_size=args.batch_size,
           num_segments=num_segments,
-          seed=args.seed
+          seed=args.seed,
+          es_patience=args.es_patience
           )
