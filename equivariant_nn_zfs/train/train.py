@@ -212,6 +212,7 @@ def train(model,
             loss = model.loss_fn(y_pred, y_true)  # Loss calculation
 
             loss.backward()  # Backpropagation
+            with open("batch_loss.log", "a") as _f: _f.write(f"{epoch} {loss.item():.6e}\n")  # batch loss per step (logging only, added 2026-10-28)
 
             mse_components = model.mse_components(y_pred, y_true)
 
