@@ -56,6 +56,8 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=123456789, help='seed')
     parser.add_argument('--target_key', type=str, default='target_L2', help='extxyz info key of the 3x3 target tensor')
     parser.add_argument('--target_scale', type=float, default=1.0, help='the model learns target / target_scale (e.g. 1000 for MHz -> GHz)')
+    parser.add_argument('--local_rin', type=float, default=None, help='pbc_zfs_local: readout weight 1 within this distance (A) of the defect centre')
+    parser.add_argument('--local_rout', type=float, default=None, help='pbc_zfs_local: readout weight 0 beyond this distance (A); None = original model')
 
     args = parser.parse_args()
 
@@ -90,7 +92,9 @@ if __name__ == "__main__":
                              irreps_out=Irreps('2e'),
                              radial_cutoff=args.rcut,
                              target_key=args.target_key,
-                             target_scale=args.target_scale
+                             target_scale=args.target_scale,
+                             local_rin=args.local_rin,
+                             local_rout=args.local_rout
                              )
 
     dataset_test = MinimalDataset(db_test,
@@ -98,7 +102,9 @@ if __name__ == "__main__":
                                   irreps_out=Irreps('2e'),
                                   radial_cutoff=args.rcut,
                                   target_key=args.target_key,
-                                  target_scale=args.target_scale
+                                  target_scale=args.target_scale,
+                                  local_rin=args.local_rin,
+                                  local_rout=args.local_rout
                                   )
 
     total_size = len(dataset)
@@ -166,6 +172,7 @@ if __name__ == "__main__":
         start_epoch = 0
 
         model.z_table = dataset.z_table  # kept with the model for prediction (predict.py)
+        model.local_rin, model.local_rout = args.local_rin, args.local_rout  # pbc_zfs_local: needed again for prediction
 
         optimizer = optimizer_lambda(model.parameters())
 

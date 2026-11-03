@@ -1,7 +1,31 @@
+import numpy as np
 import torch
+from ase.geometry import find_mic
+from ase.neighborlist import neighbor_list
 from torch.utils.data import Dataset
 from mace import data, tools
 from equivariant_nn_zfs.tools.convert_matrix import cartesian_to_spherical_irreps
+
+
+def local_weights(struct, r_in, r_out, cn_r1=2.2, cn_r2=2.6, cn_mid=3.25, cn_width=0.03):
+    """pbc_zfs_local: per-atom weights of the readout, w = 1 within r_in of the defect centre, a cosine switch to 0 at
+    r_out. Everything is continuous in the atomic positions (no jump when atoms move, unlike a hard centre selection):
+      smooth coordination CN_i = sum_j s(r_ij), s = 1 below cn_r1, cosine switch to 0 at cn_r2 (Si-C bond 1.89 A);
+      defect weight g_i = 1 / (1 + exp((CN_i - cn_mid) / cn_width)) (~1 for the 6 dangling-bond atoms of V_Si V_C,
+      CN <= 3.02, ~0 for the rest, CN >= 3.48 in all 532 SiC structures of d195c4 + test30, 300-1200 K);
+      centre = sum_i g_i x_i / sum_i g_i (minimum image, atoms within 8 A of the lowest-CN atom).
+    Rotating / translating the structure moves the centre with it, so the model stays equivariant."""
+    i, d = neighbor_list("id", struct, cn_r2)
+    s = 0.5 * (1.0 + np.cos(np.pi * np.clip((d - cn_r1) / (cn_r2 - cn_r1), 0.0, 1.0)))
+    cn = np.bincount(i, weights=s, minlength=len(struct))
+    g = 1.0 / (1.0 + np.exp(np.clip((cn - cn_mid) / cn_width, -50.0, 50.0)))
+    ref = struct.positions[np.argmin(cn)]
+    dv, dl = find_mic(struct.positions - ref, struct.cell, struct.pbc)
+    near = dl < 8.0  # all 6 dangling-bond atoms (up to ~5 A apart); g of the other atoms ~1e-11
+    centre = ref + (g[near, None] * dv[near]).sum(0) / g[near].sum()
+    _, r = find_mic(struct.positions - centre, struct.cell, struct.pbc)
+    x = np.clip((r - r_in) / (r_out - r_in), 0.0, 1.0)
+    return 0.5 * (1.0 + np.cos(np.pi * x))
 
 
 class MinimalDataset(Dataset):
@@ -12,11 +36,15 @@ class MinimalDataset(Dataset):
                  radial_cutoff,
                  device,
                  target_key='target_L2',
-                 target_scale=1.0
+                 target_scale=1.0,
+                 local_rin=None,
+                 local_rout=None
                  ):
         self.radial_cutoff = radial_cutoff
         self.structures = structures
         self.irreps_out = irreps_out
+        # pbc_zfs_local: readout weighted by local_weights(r_in, r_out) when local_rout is set (None = original model)
+        self.local_rin, self.local_rout = local_rin, local_rout
         # target_scale: the model learns target / target_scale (e.g. 1000 for a D tensor in MHz -> GHz)
         self.target_scale = target_scale
         self.targets = torch.stack([cartesian_to_spherical_irreps(torch.tensor(s.info[target_key].reshape(3, 3)) / target_scale,
@@ -46,6 +74,9 @@ class MinimalDataset(Dataset):
 
         # we handle configurations using the AtomicData class
         batch = data.AtomicData.from_config(config, z_table=self.z_table, cutoff=self.radial_cutoff)
+
+        if self.local_rout is not None:
+            batch.local_weight = torch.tensor(local_weights(struct, self.local_rin, self.local_rout), dtype=torch.get_default_dtype())
 
         target = self.targets[idx]
 

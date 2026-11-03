@@ -232,6 +232,9 @@ class TensorRegressor(nn.Module):
 
                 readout = self.readout[i](node_features)
 
+                if getattr(data, "local_weight", None) is not None:  # pbc_zfs_local: per-atom weights (dataset.local_weights)
+                    readout = readout * data.local_weight.to(readout.device, readout.dtype).unsqueeze(-1)
+
                 total_readout += readout.sum(dim=0)
 
             outputs.append(total_readout)
