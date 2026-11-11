@@ -28,6 +28,26 @@ def local_weights(struct, r_in, r_out, cn_r1=2.2, cn_r2=2.6, cn_mid=3.25, cn_wid
     return 0.5 * (1.0 + np.cos(np.pi * x))
 
 
+def local_weight_graph(struct, cn_r2=2.6, near_r=8.0):
+    """pbc_zfs_local_dw: the discrete choices of local_weights at this structure, so that the model can recompute the
+    weights in torch from the positions (differentiable; model.local_weights_torch). Same discrete choices as
+    local_weights: CN neighbour pairs within cn_r2 (with their periodic shift vectors), the lowest-CN reference atom and the
+    atoms within near_r of it (with their minimum-image shift vectors). Valid for small displacements (finite differences,
+    autograd at this structure); for a new structure the dataset builds them again."""
+    i, j, S = neighbor_list("ijS", struct, cn_r2)
+    _, d = neighbor_list("id", struct, cn_r2)
+    s = 0.5 * (1.0 + np.cos(np.pi * np.clip((d - 2.2) / (cn_r2 - 2.2), 0.0, 1.0)))
+    cn = np.bincount(i, weights=s, minlength=len(struct))
+    ref = int(np.argmin(cn))
+    dv, dl = find_mic(struct.positions - struct.positions[ref], struct.cell, struct.pbc)
+    near = np.where(dl < near_r)[0]
+    dt = torch.get_default_dtype()
+    return dict(lw_i=torch.tensor(i), lw_j=torch.tensor(j), lw_shift=torch.tensor(S @ struct.cell.array, dtype=dt),
+                lw_ref=torch.tensor([ref]), lw_near=torch.tensor(near),
+                lw_near_shift=torch.tensor(dv[near] - (struct.positions[near] - struct.positions[ref]), dtype=dt),
+                lw_cell=torch.tensor(struct.cell.array, dtype=dt))
+
+
 class MinimalDataset(Dataset):
 
     def __init__(self,
@@ -77,6 +97,8 @@ class MinimalDataset(Dataset):
 
         if self.local_rout is not None:
             batch.local_weight = torch.tensor(local_weights(struct, self.local_rin, self.local_rout), dtype=torch.get_default_dtype())
+            for k, v in local_weight_graph(struct).items():  # pbc_zfs_local_dw: for the differentiable weights in the model
+                setattr(batch, k, v)
 
         target = self.targets[idx]
 

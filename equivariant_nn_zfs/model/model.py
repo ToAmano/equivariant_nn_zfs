@@ -202,6 +202,27 @@ class TensorRegressor(nn.Module):
 
         return length_descriptor, vector_descriptor, node_attributes, edge_index
 
+    def local_weights_torch(self, data, cn_r1=2.2, cn_r2=2.6, cn_mid=3.25, cn_width=0.03):
+        """pbc_zfs_local_dw: dataset.local_weights recomputed in torch from data.positions, so that autograd includes dw/dx.
+        Discrete choices (CN pairs, reference atom, near set, shift vectors) come from dataset.local_weight_graph; everything
+        continuous (CN switch, sigmoid g_i, centre, cosine readout switch) is differentiated. Same values as the numpy weights
+        (checked to 1e-12). Minimum image through fractional rounding: exact for the cubic cells used here."""
+        pos = data.positions
+        dev, dt = pos.device, pos.dtype
+        ii, jj = data.lw_i.to(dev), data.lw_j.to(dev)
+        d = torch.linalg.norm(pos[jj] - pos[ii] + data.lw_shift.to(dev, dt), dim=1)
+        s = 0.5 * (1 + torch.cos(torch.pi * torch.clamp((d - cn_r1) / (cn_r2 - cn_r1), 0, 1)))
+        cn = torch.zeros(len(pos), dtype=dt, device=dev).index_add(0, ii, s)
+        g = torch.sigmoid(-torch.clamp((cn - cn_mid) / cn_width, -50, 50))
+        ref, near = data.lw_ref.to(dev)[0], data.lw_near.to(dev)
+        dv = pos[near] - pos[ref] + data.lw_near_shift.to(dev, dt)
+        centre = pos[ref] + (g[near, None] * dv).sum(0) / g[near].sum()
+        cell = data.lw_cell.to(dev, dt)
+        frac = (pos - centre) @ torch.linalg.inv(cell)
+        rv = (frac - torch.round(frac).detach()) @ cell
+        x = torch.clamp((torch.linalg.norm(rv, dim=1) - self.local_rin) / (self.local_rout - self.local_rin), 0, 1)
+        return 0.5 * (1 + torch.cos(torch.pi * x))
+
     def forward(self,
                 batch_data
                 ):
@@ -232,7 +253,11 @@ class TensorRegressor(nn.Module):
 
                 readout = self.readout[i](node_features)
 
-                if getattr(data, "local_weight", None) is not None:  # pbc_zfs_local: per-atom weights (dataset.local_weights)
+                if getattr(self, "diff_weights", False) and getattr(data, "lw_i", None) is not None:
+                    if i == 0:  # pbc_zfs_local_dw: weights recomputed in torch (differentiable in the positions)
+                        w_b = self.local_weights_torch(data).to(readout.device, readout.dtype)
+                    readout = readout * w_b.unsqueeze(-1)
+                elif getattr(data, "local_weight", None) is not None:  # pbc_zfs_local: per-atom weights (dataset.local_weights)
                     readout = readout * data.local_weight.to(readout.device, readout.dtype).unsqueeze(-1)
 
                 total_readout += readout.sum(dim=0)

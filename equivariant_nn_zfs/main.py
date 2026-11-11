@@ -58,6 +58,7 @@ if __name__ == "__main__":
     parser.add_argument('--target_scale', type=float, default=1.0, help='the model learns target / target_scale (e.g. 1000 for MHz -> GHz)')
     parser.add_argument('--local_rin', type=float, default=None, help='pbc_zfs_local: readout weight 1 within this distance (A) of the defect centre')
     parser.add_argument('--local_rout', type=float, default=None, help='pbc_zfs_local: readout weight 0 beyond this distance (A); None = original model')
+    parser.add_argument('--diff_weights', action='store_true', help='pbc_zfs_local_dw: recompute the readout weights in torch from the positions (differentiable; same values)')
 
     args = parser.parse_args()
 
@@ -173,6 +174,7 @@ if __name__ == "__main__":
 
         model.z_table = dataset.z_table  # kept with the model for prediction (predict.py)
         model.local_rin, model.local_rout = args.local_rin, args.local_rout  # pbc_zfs_local: needed again for prediction
+        model.diff_weights = bool(args.diff_weights)  # pbc_zfs_local_dw (old checkpoints: attribute missing -> False)
 
         optimizer = optimizer_lambda(model.parameters())
 
