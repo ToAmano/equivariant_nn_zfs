@@ -65,6 +65,8 @@ if __name__ == "__main__":
     parser.add_argument('--stencil_json', type=str, default=None, help='JSON list of stencils: {"eq": name, "p": name, "m": name, "h": amplitude}')
     parser.add_argument('--stencil_wc', type=float, default=1e-4, help='weight of the curvature term [(D+ + D- - 2 D0) / h^2]^2 (target units / A^2)')
     parser.add_argument('--stencil_ws', type=float, default=1e-3, help='weight of the slope term [(D+ - D-) / 2h]^2 (target units / A)')
+    parser.add_argument('--stencil_wcomp', type=str, default=None, help='weights "w_axial,w_tilt,w_E" of the parts of the stencil error tensor in the defect frame (tilt = xz, yz couples |0> and |+-1>, i.e. T1); default: plain mean over the 5 components')
+    parser.add_argument('--stencil_axis', type=str, default='1,1,1', help='defect axis (z of the defect frame) for --stencil_wcomp')
     parser.add_argument('--init_model', type=str, default=None, help='start from this model file (torch.save of the model, e.g. checkpoint_model_final.pth) with a new optimizer (fine-tuning)')
 
     args = parser.parse_args()
@@ -234,5 +236,7 @@ if __name__ == "__main__":
           es_patience=args.es_patience,
           stencils=stencils,
           stencil_wc=args.stencil_wc,
-          stencil_ws=args.stencil_ws
+          stencil_ws=args.stencil_ws,
+          stencil_axis=[float(x) for x in args.stencil_axis.split(',')],
+          stencil_wcomp=None if args.stencil_wcomp is None else [float(x) for x in args.stencil_wcomp.split(',')]
           )

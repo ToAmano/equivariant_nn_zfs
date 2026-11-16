@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader, Subset
 import logging
 import sys
 import random
+from equivariant_nn_zfs.tools.convert_matrix import spherical_irreps_to_cartesian
 
 # Logger that logs only to stdout
 console_logger = logging.getLogger('console_logger')
@@ -137,7 +138,9 @@ def train(model,
           es_patience=0,
           stencils=None,
           stencil_wc=1e-4,
-          stencil_ws=1e-3
+          stencil_ws=1e-3,
+          stencil_axis=None,
+          stencil_wcomp=None
           ):
     random.seed(seed)
 
@@ -233,6 +236,10 @@ def train(model,
         st_log = [0.0, 0.0, 0]
         if stencils is not None:
             ds_st, groups = stencils
+            if stencil_wcomp is not None:
+                nz = torch.tensor(stencil_axis, dtype=torch.get_default_dtype()); nz = nz / nz.norm()
+                ex = torch.linalg.cross(nz, torch.tensor([0.0, 0.0, 1.0]) if abs(nz[2]) < 0.9 else torch.tensor([1.0, 0.0, 0.0])); ex = ex / ex.norm()
+                st_rot = torch.stack([ex, torch.linalg.cross(nz, ex), nz]).to(device)   # rows = x', y', z' of the defect frame
             order = list(range(len(groups))); random.shuffle(order)
             for gi in order:
                 i0, ip, im, h = groups[gi]
@@ -240,9 +247,19 @@ def train(model,
                 data3 = [ds_st[i][0].to(device) for i in (i0, ip, im)]
                 t3 = torch.stack([ds_st[i][1] for i in (i0, ip, im)]).to(device)
                 y3 = model(data3)
+                # stencil_wcomp = (w_axial, w_tilt, w_E): the error tensor is rotated to the defect frame (z' = stencil_axis) and its parts are
+                # weighted separately. For S = 1 with the axis along z': zz' shifts the levels (no transition), xz' / yz' couple |0> and |+-1>
+                # (these set T1), (xx' - yy') / 2 and xy' couple |+1> and |-1> (E type). The factors 3/2, 2, 2 make weights (1, 1, 1) equal to
+                # the squared Frobenius norm of the traceless symmetric error tensor; / 5 keeps the scale of the unweighted mean over 5 components.
+                def werr(dy):
+                    if stencil_wcomp is None:
+                        return (dy ** 2).mean()
+                    C = spherical_irreps_to_cartesian(dy); C = st_rot @ C @ st_rot.T
+                    return (stencil_wcomp[0] * 1.5 * C[2, 2] ** 2 + stencil_wcomp[1] * 2 * (C[0, 2] ** 2 + C[1, 2] ** 2)
+                            + stencil_wcomp[2] * 2 * (((C[0, 0] - C[1, 1]) / 2) ** 2 + C[0, 1] ** 2)) / 5
                 sl = lambda y: (y[1] - y[2]) / (2 * h)
                 cu = lambda y: (y[1] + y[2] - 2 * y[0]) / h ** 2
-                ls = ((sl(y3) - sl(t3)) ** 2).mean(); lc = ((cu(y3) - cu(t3)) ** 2).mean()
+                ls = werr(sl(y3) - sl(t3)); lc = werr(cu(y3) - cu(t3))
                 (stencil_ws * ls + stencil_wc * lc).backward()
                 optimizer.step()
                 st_log[0] += ls.item(); st_log[1] += lc.item(); st_log[2] += 1
