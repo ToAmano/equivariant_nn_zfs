@@ -60,6 +60,13 @@ if __name__ == "__main__":
     parser.add_argument('--local_rout', type=float, default=None, help='pbc_zfs_local: readout weight 0 beyond this distance (A); None = original model')
     parser.add_argument('--diff_weights', action='store_true', help='pbc_zfs_local_dw: recompute the readout weights in torch from the positions (differentiable; same values)')
 
+    # pbc_zfs_local_st (2026-11-17): finite-difference ("stencil") terms in the loss, see train.py
+    parser.add_argument('--stencil_path', type=str, default=None, help='EXTXYZ with the structures of the stencils (info name, same target key / scale as the training set)')
+    parser.add_argument('--stencil_json', type=str, default=None, help='JSON list of stencils: {"eq": name, "p": name, "m": name, "h": amplitude}')
+    parser.add_argument('--stencil_wc', type=float, default=1e-4, help='weight of the curvature term [(D+ + D- - 2 D0) / h^2]^2 (target units / A^2)')
+    parser.add_argument('--stencil_ws', type=float, default=1e-3, help='weight of the slope term [(D+ - D-) / 2h]^2 (target units / A)')
+    parser.add_argument('--init_model', type=str, default=None, help='start from this model file (torch.save of the model, e.g. checkpoint_model_final.pth) with a new optimizer (fine-tuning)')
+
     args = parser.parse_args()
 
     if args.mlp is None:
@@ -108,6 +115,16 @@ if __name__ == "__main__":
                                   local_rout=args.local_rout
                                   )
 
+    # stencils: the structures are put through the same dataset class; a stencil is (index eq, index +, index -, h)
+    stencils = None
+    if args.stencil_path is not None:
+        import json
+        db_st = read(args.stencil_path, ':')
+        dataset_st = MinimalDataset(db_st, device=device, irreps_out=Irreps('2e'), radial_cutoff=args.rcut, target_key=args.target_key,
+                                    target_scale=args.target_scale, local_rin=args.local_rin, local_rout=args.local_rout)
+        idx = {a_.info['name']: i for i, a_ in enumerate(db_st)}
+        stencils = (dataset_st, [(idx[g['eq']], idx[g['p']], idx[g['m']], float(g['h'])) for g in json.load(open(args.stencil_json))])
+
     total_size = len(dataset)
 
     validation_ratio = 0.05
@@ -152,6 +169,11 @@ if __name__ == "__main__":
         scheduler.load_state_dict(checkpoint['scheduler_state'])
 
         start_epoch = checkpoint['epoch'] + 1
+    elif args.init_model is not None:
+        model = torch.load(args.init_model, weights_only=False, map_location=device); model.device = device
+        start_epoch = 0
+        optimizer = optimizer_lambda(model.parameters())
+        scheduler = scheduler_lambda(optimizer)
     else:
         model = TensorRegressor(radial_cutoff=args.rcut,
                                 pol_cut_num=args.pol_cut_num,
@@ -209,5 +231,8 @@ if __name__ == "__main__":
           batch_size=args.batch_size,
           num_segments=args.num_segments,
           seed=args.seed,
-          es_patience=args.es_patience
+          es_patience=args.es_patience,
+          stencils=stencils,
+          stencil_wc=args.stencil_wc,
+          stencil_ws=args.stencil_ws
           )

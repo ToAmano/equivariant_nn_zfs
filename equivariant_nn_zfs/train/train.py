@@ -134,7 +134,10 @@ def train(model,
           num_segments,
           seed,
           device=None,
-          es_patience=0
+          es_patience=0,
+          stencils=None,
+          stencil_wc=1e-4,
+          stencil_ws=1e-3
           ):
     random.seed(seed)
 
@@ -224,6 +227,26 @@ def train(model,
 
             total_loss += loss.item()
 
+        # pbc_zfs_local_st: finite-difference ("stencil") terms. For each stencil (eq, +h, -h along one direction) the model predicts the
+        # three structures in one batch; its slope (D+ - D-) / 2h and curvature (D+ + D- - 2 D0) / h^2 are compared with the same
+        # combinations of the labels. The value loss alone hardly constrains the curvature (a 2nd difference of a few MHz at h = 0.05 A).
+        st_log = [0.0, 0.0, 0]
+        if stencils is not None:
+            ds_st, groups = stencils
+            order = list(range(len(groups))); random.shuffle(order)
+            for gi in order:
+                i0, ip, im, h = groups[gi]
+                optimizer.zero_grad()
+                data3 = [ds_st[i][0].to(device) for i in (i0, ip, im)]
+                t3 = torch.stack([ds_st[i][1] for i in (i0, ip, im)]).to(device)
+                y3 = model(data3)
+                sl = lambda y: (y[1] - y[2]) / (2 * h)
+                cu = lambda y: (y[1] + y[2] - 2 * y[0]) / h ** 2
+                ls = ((sl(y3) - sl(t3)) ** 2).mean(); lc = ((cu(y3) - cu(t3)) ** 2).mean()
+                (stencil_ws * ls + stencil_wc * lc).backward()
+                optimizer.step()
+                st_log[0] += ls.item(); st_log[1] += lc.item(); st_log[2] += 1
+
         for param_group in optimizer.param_groups:
             console_logger.info(f"LR: {param_group['lr']}")
 
@@ -242,6 +265,8 @@ def train(model,
         test(epoch, model, test_loader, device)
 
         scheduler.step(val_loss)
+        if stencils is not None:
+            console_logger.info(f"STENCIL    slope mse = {st_log[0] / max(st_log[2], 1):.4e}  curvature mse = {st_log[1] / max(st_log[2], 1):.4e}  ({st_log[2]} stencils)")
 
         torch.save({
             'model_state': model.state_dict(),
