@@ -254,7 +254,7 @@ def train(model,
                 def werr(dy):
                     if stencil_wcomp is None:
                         return (dy ** 2).mean()
-                    C = spherical_irreps_to_cartesian(dy); C = st_rot @ C @ st_rot.T
+                    C = spherical_irreps_to_cartesian(dy); Rm = st_rot.to(C.dtype); C = Rm @ C @ Rm.T
                     return (stencil_wcomp[0] * 1.5 * C[2, 2] ** 2 + stencil_wcomp[1] * 2 * (C[0, 2] ** 2 + C[1, 2] ** 2)
                             + stencil_wcomp[2] * 2 * (((C[0, 0] - C[1, 1]) / 2) ** 2 + C[0, 1] ** 2)) / 5
                 sl = lambda y: (y[1] - y[2]) / (2 * h)
