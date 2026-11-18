@@ -67,6 +67,9 @@ if __name__ == "__main__":
     parser.add_argument('--stencil_ws', type=float, default=1e-3, help='weight of the slope term [(D+ - D-) / 2h]^2 (target units / A)')
     parser.add_argument('--stencil_wcomp', type=str, default=None, help='weights "w_axial,w_tilt,w_E" of the parts of the stencil error tensor in the defect frame (tilt = xz, yz couples |0> and |+-1>, i.e. T1); default: plain mean over the 5 components')
     parser.add_argument('--stencil_axis', type=str, default='1,1,1', help='defect axis (z of the defect frame) for --stencil_wcomp')
+    # 2026-11-19: fixed validation set and weight decay (seed-spread tests)
+    parser.add_argument('--data_val_path', type=str, default=None, help='EXTXYZ of a fixed validation set (all of --data_path is then used for training); default: a random 5 %% of --data_path chosen with --seed')
+    parser.add_argument('--weight_decay', type=float, default=5e-7, help='AdamW weight decay (default 5e-7 = the previous fixed value)')
     parser.add_argument('--init_model', type=str, default=None, help='start from this model file (torch.save of the model, e.g. checkpoint_model_final.pth) with a new optimizer (fine-tuning)')
 
     args = parser.parse_args()
@@ -129,25 +132,32 @@ if __name__ == "__main__":
 
     total_size = len(dataset)
 
-    validation_ratio = 0.05
+    if args.data_val_path is not None:
+        # fixed validation set from a separate file: the same for every seed, and the whole training file is used for training
+        db_val = read(args.data_val_path, ':')
+        validation_data = MinimalDataset(db_val, device=device, irreps_out=Irreps('2e'), radial_cutoff=args.rcut, target_key=args.target_key,
+                                         target_scale=args.target_scale, local_rin=args.local_rin, local_rout=args.local_rout)
+        train_data = torch.utils.data.Subset(dataset, list(range(total_size)))
+    else:
+        validation_ratio = 0.05
 
-    # Calculate split sizes
+        # Calculate split sizes
 
-    validation_size = int(validation_ratio * total_size)
+        validation_size = int(validation_ratio * total_size)
 
-    train_size = total_size  - validation_size  # ensures all data is used
+        train_size = total_size  - validation_size  # ensures all data is used
 
-    generator = torch.Generator().manual_seed(args.seed)
+        generator = torch.Generator().manual_seed(args.seed)
 
-    # Randomly split
-    train_data, validation_data = random_split(dataset,
-                                               [train_size, validation_size],
-                                               generator=generator
-                                               )
+        # Randomly split
+        train_data, validation_data = random_split(dataset,
+                                                   [train_size, validation_size],
+                                                   generator=generator
+                                                   )
 
     optimizer_lambda = lambda parameters : optim.AdamW(parameters,
                                                        lr=args.lr,
-                                                       weight_decay=5e-7
+                                                       weight_decay=args.weight_decay
                                                        )
 
     scheduler_lambda = lambda optimizer_ : optim.lr_scheduler.ReduceLROnPlateau(optimizer_,
